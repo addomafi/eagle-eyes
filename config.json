@@ -1,0 +1,11 @@
+{
+  "alarms": [
+    {
+      "name": "Flight availability - Response time",
+      "description": "Send alarms when std dev is greater than 15secs in a period of 15 minutes",
+      "query": "component:/SmilesSBFlightAvailability.*FlightAvailability.*/ AND !metricType:/.*(Transport|searchFlightStats|getFlightInfo).*/",
+      "threshold": "15000",
+      "period": "15m"
+    }
+  ]
+}

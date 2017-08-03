@@ -1,0 +1,15 @@
+{
+  "name": "elasticsearch-eagleeyes",
+  "version": "1.0.0",
+  "description": "You can define alarms based on ES querys",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Adauto Martins <adauto.martins@ideotech.com.br>",
+  "license": "MIT",
+  "dependencies": {
+    "elasticsearch": "^13.2.0",
+    "lodash": "^4.17.4"
+  }
+}
