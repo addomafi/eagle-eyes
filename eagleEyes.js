@@ -1,0 +1,324 @@
+let es = require('elasticsearch')
+let _ = require('lodash')
+let extend = require('extend')
+let moment = require('moment')
+let request = require('request-promise-native')
+
+var eagleeyes = function () {
+	var self = this
+	self.sourceES = new es.Client({
+		host: process.env.SOURCE_ELK_HOST,
+		log: 'warning'
+	});
+
+	self.targetES = new es.Client({
+		host: process.env.TARGET_ELK_HOST,
+		log: 'warning'
+	});
+
+  self.timelion = {
+    url: `https://${process.env.TARGET_ELK_HOST}/_plugin/kibana/api/timelion/run`,
+    headers: {
+      "kbn-version": "5.1.1"
+    }
+  };
+
+	self.pagerduty = {
+		url: process.env.PG_URL,
+		json: {
+			"routing_key": process.env.PG_KEY
+		}
+	};
+
+  self._init = function() {
+		return new Promise((resolve, reject) => {
+			if (!self.config || process.hrtime(self.config.loadTime)[0] > 60) {
+				self.sourceES.search({
+    			index: ".eagle-eyes-control",
+          type: "delayed-alarms",
+    			body: {
+					  "query": {
+					    "range": {
+					      "timeFrame": {
+					        "gte": moment().subtract(1, 'minutes').format('x'),
+					        "lte": moment().format('x')
+					      }
+					    }
+					  }
+					}
+    		}).then(delayed => {
+					self.sourceES.search({
+	    			index: ".eagle-eyes",
+	          type: "alarms",
+	    			body: {
+	            "size": 1000
+	          }
+	    		}).then(body => {
+	          var alarms = [];
+	          body.hits.hits.forEach(function(item) {
+	            alarms.push(extend({
+								_id: item["_id"],
+	              name: item["_source"].name,
+	              description: item["_source"].description,
+	              version: item["_source"].version
+	            }, JSON.parse(item["_source"].configJSON)));
+	          });
+
+						// Remove delayed alarms
+						if (delayed.hits.hits.length > 0) {
+							alarms = _.xorWith(delayed.hits.hits, alarms, function(a,b) {
+								return a["_id"] === b["_id"]
+							});
+						}
+
+	          resolve({
+	            loadTime: process.hrtime(),
+	            alarms: alarms
+	          });
+	        }, err => {
+	          reject(error.message);
+	        })
+				}, err => {
+					reject(error.message);
+				});
+			} else {
+				resolve(self.config);
+			}
+		});
+	}
+
+  self._sendAlarm = function(alarm) {
+		return new Promise((resolve, reject) => {
+			request.post(extend(true, {
+				"json": {
+				  "payload": {
+				    "summary": `${alarm.alarm.name} - ${alarm.alarm.description}`,
+				    "timestamp": moment().subtract(1, 'minutes').format("YYYY-MM-DDTHH:mm:ss.SSSZ"),
+				    "source": alarm.alarm.name,
+				    "severity": "critical",
+				    "group": alarm.alarm.group,
+				    "class": alarm.alarm.type
+				  },
+				  "event_action": "trigger"
+				}
+			}, this.pagerduty)).then(body => {
+				resolve(body);
+			}).catch(err => {
+				reject(err);
+			});
+		});
+  }
+
+  self._checkResponseTime = function(options) {
+		var rangeFilter = {};
+		rangeFilter[options.timestamp] = {
+			"gte": moment().subtract(1, 'minutes').subtract(options.period.value, options.period.type).format('x'),
+			"lte": moment().subtract(1, 'minutes').format('x'),
+			"format": "epoch_millis"
+		};
+
+    return new Promise((resolve, reject) => {
+      self.targetES.search({
+    			index: options.index,
+    			body: {
+            "size": 0,
+            "query": {
+              "bool": {
+                "must": [
+                  {
+                    "query_string": {
+                      "analyze_wildcard": true,
+                      "query": options.query
+                    }
+                  },
+                  {
+                    "range": rangeFilter
+                  }
+                ],
+                "must_not": []
+              }
+            },
+            "_source": {
+              "excludes": []
+            },
+            "aggs": {
+              "timeline": {
+                "date_histogram": {
+                  "field": options.timestamp,
+                  "interval": "1m",
+                  "time_zone": "America/Sao_Paulo",
+                  "min_doc_count": 1
+                },
+                "aggs": {
+                  "responseTime": {
+                    "extended_stats": {
+                      "field": "value"
+                    }
+                  }
+                }
+              }
+            }
+          }
+    		}).then(function(body) {
+          var details = [];
+					if (body && body.aggregations) {
+	          body.aggregations.timeline.buckets.forEach(function(item) {
+	            if (item.responseTime["std_deviation"] > options.threshold["std_deviation"]) {
+	              details.push({
+	                "metric": "std_deviation",
+	                "value": Math.round(item.responseTime["std_deviation"])
+	              });
+	            } else if (item.responseTime["avg"] > options.threshold["avg"]) {
+	              details.push({
+	                "metric": "avg",
+	                "value": Math.round(item.responseTime["avg"])
+	              });
+	            } else if (item.responseTime["max"] > options.threshold["max"]) {
+	              details.push({
+	                "metric": "max",
+	                "value": Math.round(item.responseTime["max"])
+	              });
+	            }
+	          });
+
+	          resolve({
+	            alarm: options,
+	            details: details,
+	            send: details.length >= options.period.value
+	          });
+					} else {
+						resolve({
+	            alarm: options,
+	            details: details,
+	            send: false
+	          });
+					}
+        }, function (error) {
+					console.log(error);
+          reject(error.message);
+        });
+      });
+  }
+
+  self._checkErrorRate = function(options) {
+    return new Promise((resolve, reject) => {
+      request.post(extend({
+        json: {
+          "sheet": [
+            `.es(index=${options.index}, q='${options.queryErrors}', metric=${options.metric}, timefield=${options.timestamp}).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp})).multiply(100).label('CURRENT'), .es(index=${options.index}, q='_type: /osb-error-.*/${options.queryErrors}', metric=${options.metric}, timefield=${options.timestamp}, offset=-1w).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp}, offset=-1w)).multiply(100).label('OFFSET'), .es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp}).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp}, offset=-15m)).subtract(1).multiply(100).label('REQUEST_RATE')`
+          ],
+          "extended": {
+            "es": {
+              "filter": {
+                "bool": {
+                  "must": [
+                    {
+                      "query_string": {
+                        "analyze_wildcard": true,
+                        "query": options.query
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "time": {
+            "from": moment().subtract(2, 'minutes').subtract(options.period.value, options.period.type).format("YYYY-MM-DDTHH:mm:ss.SSSZ"),
+            "interval": "1m",
+            "mode": "absolute",
+            "timezone": "America/Sao_Paulo",
+            "to": moment().subtract(1, 'minutes').format("YYYY-MM-DDTHH:mm:ss.SSSZ")
+          }
+        }
+      }, this.timelion)).then(body => {
+          var data = {
+            "current" : _.fromPairs(_.find(body.sheet[0].list, ['label', 'CURRENT']).data),
+            "offset" : _.fromPairs(_.find(body.sheet[0].list, ['label', 'OFFSET']).data),
+            "requestRate" : _.fromPairs(_.find(body.sheet[0].list, ['label', 'REQUEST_RATE']).data)
+          };
+
+          var details = [];
+          Object.keys(data.current).forEach(function(item) {
+            if (data.current[item] > options.threshold.rate) {
+              details.push({
+                "metric": "errorRate",
+                "value": Math.round(data.current[item])
+              });
+            }
+          });
+
+          resolve({
+            alarm: options,
+            details: details,
+            send: details.length >= options.period.value
+          });
+        }).catch(error => {
+          reject(error.message);
+        });
+      });
+  }
+}
+
+eagleeyes.prototype.process = function () {
+  return new Promise((resolve, reject) => {
+    this._init().then(config => {
+      var alarmsInProcessing = [];
+      config.alarms.forEach(item => {
+				// set defaults
+				item = extend({
+					"timestamp": "@timestamp",
+					"queryErrors": "*",
+					"metric": "count"
+				}, item);
+
+        if ("RESPONSE_TIME" === item.type) {
+          alarmsInProcessing.push(this._checkResponseTime(item));
+        } else if ("ERROR_OCCURRENCES" === item.type) {
+          alarmsInProcessing.push(this._checkErrorRate(item));
+        }
+      });
+      Promise.all(alarmsInProcessing).then(results => {
+        var alarms = _.filter(results, 'send');
+        if (alarms.length > 0) {
+          alarms.forEach(alarm => {
+            this._sendAlarm(alarm).then(body => {
+							console.log('Alarm was sent... ' + JSON.stringify(body));
+						}).catch(err => {
+							console.log('Was identified an error during the triggering of an alarm... ' + JSON.stringify(err));
+						});
+          });
+
+					// Set delay
+					var body = []
+					alarms.forEach(function(item) {
+						body.push({ index:  { _index: ".eagle-eyes-control", _type: "delayed-alarms", _id: item.alarm["_id"] } });
+						body.push({
+							"timeFrame" : {
+						    "gte" : moment().format('x'),
+						    "lte" : moment().add(item.alarm.period.value, item.alarm.period.type).format('x')
+						  }
+						});
+					});
+
+					// Save delay
+					this.sourceES.bulk({
+						body: body
+					}, function (error, response) {
+						console.log(JSON.stringify(response));
+						if (error) {
+							console.log(error);
+						}
+					});
+        }
+        resolve(results);
+      }).catch(err => {
+        reject(err);
+      });
+    }).catch(err => {
+      reject(err);
+    });
+  });
+}
+
+module.exports = eagleeyes
