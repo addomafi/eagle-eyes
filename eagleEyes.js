@@ -3,6 +3,7 @@ let _ = require('lodash')
 let extend = require('extend')
 let moment = require('moment')
 let request = require('request-promise-native')
+var PromiseBB = require("bluebird");
 
 var eagleeyes = function () {
 	var self = this
@@ -28,6 +29,10 @@ var eagleeyes = function () {
 		json: {
 			"routing_key": process.env.PG_KEY
 		}
+	};
+
+	self.options = {
+		concurrency: parseInt(process.env.CONCURRENCY)
 	};
 
   self._init = function() {
@@ -201,11 +206,13 @@ var eagleeyes = function () {
   }
 
   self._checkErrorRate = function(options) {
+		// TODO performance optimization
+		// .es(index=${options.index}, q='${options.queryErrors}', metric=${options.metric}, timefield=${options.timestamp}).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp})).multiply(100).label('CURRENT'), .es(index=${options.index}, q='_type: /osb-error-.*/${options.queryErrors}', metric=${options.metric}, timefield=${options.timestamp}, offset=-1w).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp}, offset=-1w)).multiply(100).label('OFFSET'), .es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp}).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp}, offset=-15m)).subtract(1).multiply(100).label('REQUEST_RATE')
     return new Promise((resolve, reject) => {
       request.post(extend({
         json: {
           "sheet": [
-            `.es(index=${options.index}, q='${options.queryErrors}', metric=${options.metric}, timefield=${options.timestamp}).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp})).multiply(100).label('CURRENT'), .es(index=${options.index}, q='_type: /osb-error-.*/${options.queryErrors}', metric=${options.metric}, timefield=${options.timestamp}, offset=-1w).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp}, offset=-1w)).multiply(100).label('OFFSET'), .es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp}).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp}, offset=-15m)).subtract(1).multiply(100).label('REQUEST_RATE')`
+            `.es(index=${options.index}, q='${options.queryErrors}', metric=${options.metric}, timefield=${options.timestamp}).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp})).multiply(100).label('CURRENT')`
           ],
           "extended": {
             "es": {
@@ -233,9 +240,9 @@ var eagleeyes = function () {
         }
       }, this.timelion)).then(body => {
           var data = {
-            "current" : _.fromPairs(_.find(body.sheet[0].list, ['label', 'CURRENT']).data),
-            "offset" : _.fromPairs(_.find(body.sheet[0].list, ['label', 'OFFSET']).data),
-            "requestRate" : _.fromPairs(_.find(body.sheet[0].list, ['label', 'REQUEST_RATE']).data)
+            "current" : _.fromPairs(_.find(body.sheet[0].list, ['label', 'CURRENT']).data)
+            // "offset" : _.fromPairs(_.find(body.sheet[0].list, ['label', 'OFFSET']).data),
+            // "requestRate" : _.fromPairs(_.find(body.sheet[0].list, ['label', 'REQUEST_RATE']).data)
           };
 
           var details = [];
@@ -256,15 +263,15 @@ var eagleeyes = function () {
         }).catch(error => {
           reject(error.message);
         });
-      });
+    });
   }
 }
 
 eagleeyes.prototype.process = function () {
+	var self = this
   return new Promise((resolve, reject) => {
     this._init().then(config => {
-      var alarmsInProcessing = [];
-      config.alarms.forEach(item => {
+			PromiseBB.map(config.alarms, function(item) {
 				// set defaults
 				item = extend({
 					"timestamp": "@timestamp",
@@ -272,13 +279,12 @@ eagleeyes.prototype.process = function () {
 					"metric": "count"
 				}, item);
 
-        if ("RESPONSE_TIME" === item.type) {
-          alarmsInProcessing.push(this._checkResponseTime(item));
-        } else if ("ERROR_OCCURRENCES" === item.type) {
-          alarmsInProcessing.push(this._checkErrorRate(item));
-        }
-      });
-      Promise.all(alarmsInProcessing).then(results => {
+				if ("RESPONSE_TIME" === item.type) {
+					return self._checkResponseTime(item);
+				} else if ("ERROR_OCCURRENCES" === item.type) {
+					return self._checkErrorRate(item);
+				}
+			}, {concurrency: self.options.concurrency}).then(results => {
         var alarms = _.filter(results, 'send');
         if (alarms.length > 0) {
           alarms.forEach(alarm => {

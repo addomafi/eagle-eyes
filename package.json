@@ -9,6 +9,7 @@
   "author": "Adauto Martins <adauto.martins@ideotech.com.br>",
   "license": "MIT",
   "dependencies": {
+    "bluebird": "^3.5.0",
     "elasticsearch": "^13.2.0",
     "extend": "^3.0.1",
     "lodash": "^4.17.4",
