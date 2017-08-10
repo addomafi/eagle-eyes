@@ -1,0 +1,61 @@
+PUT /.eagle-eyes
+{
+  "settings": {
+    "index": {
+      "number_of_shards": "1",
+      "number_of_replicas": "1",
+      "mapper": {
+        "dynamic": "false"
+      }
+    }
+  },
+  "mappings": {
+    "_default_": {
+      "dynamic": "false"
+    },
+    "alarms": {
+      "properties": {
+        "name": {
+          "type": "text"
+        },
+        "description": {
+          "type": "text"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "configJSON": {
+          "type": "text"
+        }
+      }
+    }
+  },
+  "aliases": {}
+}
+
+PUT /.eagle-eyes-control
+{
+  "settings": {
+    "index": {
+      "number_of_shards": "1",
+      "number_of_replicas": "1",
+      "mapper": {
+        "dynamic": "false"
+      }
+    }
+  },
+  "mappings": {
+    "_default_": {
+      "dynamic": "false"
+    },
+    "delayed-alarms": {
+      "properties": {
+        "timeFrame": {
+          "type": "date_range",
+          "format": "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd||epoch_millis"
+        }
+      }
+    }
+  },
+  "aliases": {}
+}
