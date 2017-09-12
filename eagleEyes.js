@@ -46,10 +46,12 @@ var eagleeyes = function () {
 					    "range": {
 					      "timeFrame": {
 					        "gte": moment().subtract(1, 'minutes').format('x'),
-					        "lte": moment().format('x')
+					        "lte": moment().format('x'),
+        					"format": "epoch_millis"
 					      }
 					    }
-					  }
+					  },
+						"size": 1000
 					}
     		}).then(delayed => {
 					self.sourceES.search({
@@ -71,9 +73,14 @@ var eagleeyes = function () {
 
 						// Remove delayed alarms
 						if (delayed.hits.hits.length > 0) {
-							alarms = _.xorWith(delayed.hits.hits, alarms, function(a,b) {
-								return a["_id"] === b["_id"]
-							});
+							// If has an item with _id = ALL dont check metrics for alarms
+							if (_.filter(delayed.hits.hits, ['_id', 'ALL']).length == 0) {
+								alarms = _.pullAllWith(alarms, delayed.hits.hits, function(a,b) {
+									return b["_id"] === a["_id"] || b["_id"] === a.group
+								});
+							} else {
+								alarms = []
+							}
 						}
 
 	          resolve({
