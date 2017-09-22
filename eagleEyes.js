@@ -20,7 +20,7 @@ var eagleeyes = function () {
   self.timelion = {
     url: `https://${process.env.TARGET_ELK_HOST}/_plugin/kibana/api/timelion/run`,
     headers: {
-      "kbn-version": "5.1.1"
+      "kbn-version": "5.3.2"
     }
   };
 
