@@ -100,11 +100,18 @@ var eagleeyes = function () {
 	}
 
   self._sendAlarm = function(alarm) {
+		var template = function(tpl, args) {
+		    var keys = Object.keys(args),
+		        fn = new Function(...keys,
+		          'return `' + tpl.replace(/`/g, '\\`') + '`');
+		    return fn(...keys.map(x => args[x]));
+		};
+
 		return new Promise((resolve, reject) => {
 			request.post(extend(true, {
 				"json": {
 				  "payload": {
-				    "summary": `${alarm.alarm.name} - ${alarm.alarm.description}`,
+				    "summary": `${alarm.alarm.name} - ${template(alarm.alarm.description, alarm.alarm)}`,
 				    "timestamp": moment().subtract(1, 'minutes').format("YYYY-MM-DDTHH:mm:ss.SSSZ"),
 				    "source": alarm.alarm.name,
 				    "severity": "critical",
