@@ -11,14 +11,14 @@ var eagleeyes = function() {
   var self = this
   self.sourceES = new es.Client({
     host: process.env.SOURCE_ELK_HOST,
+		// createNodeAgent: () => proxy('http://10.2.3.41:3128'),
     log: 'warning'
-		// createNodeAgent: () => proxy('http://10.2.3.41:3128')
   });
 
   self.targetES = new es.Client({
     host: process.env.TARGET_ELK_HOST,
+		// createNodeAgent: () => proxy('http://10.2.3.41:3128'),
     log: 'warning'
-		// createNodeAgent: () => proxy('http://10.2.3.41:3128')
   });
 
   self.timelion = {
@@ -86,6 +86,18 @@ var eagleeyes = function() {
                 alarms = []
               }
             }
+
+						// Remove alarms that in on outage window
+						_.filter(alarms, function(alarm) {
+							if (alarm.outage) {
+								var start = moment(alarm.outage.start, "HH:mm").format('HH');
+								var end = moment(alarm.outage.end, "HH:mm").format('HH');
+								var s = moment().hours(0).minutes(0).seconds(0).add(start, 'hours')
+								var e = moment().hours(0).minutes(0).seconds(0).add(start, 'hours').add(end, 'hours')
+								return !moment().isBetween(s, e)
+							}
+							return true;
+						})
 
             resolve({
               loadTime: process.hrtime(),
@@ -288,7 +300,7 @@ var eagleeyes = function() {
       request.post(extend({
         "json": {
           "sheet": [
-            `.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}).divide(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-1w).sum(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, timefield=@timestamp, offset=-2w)).sum(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-3w)).sum(.es(index=${options.index}, q='${options.queryErrors}', metric=${options.metric}, timefield=${options.timestamp}, offset=-4w)).divide(4)).subtract(1).multiply(100).label('CURRENT')`
+            `.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}).divide(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-1w).sum(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-2w)).sum(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-3w)).sum(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-4w)).divide(4)).subtract(1).multiply(100).label('CURRENT')`
           ],
           "extended": {
             "es": {
@@ -305,7 +317,7 @@ var eagleeyes = function() {
             }
           },
           "time": {
-            "from": moment().subtract(2, 'minutes').subtract(options.period.value, options.period.type).format("YYYY-MM-DDTHH:mm:ss.SSSZ"),
+            "from": moment().subtract(2, 'minutes').subtract((options.period.value*6), options.period.type).format("YYYY-MM-DDTHH:mm:ss.SSSZ"),
             "interval": `${options.period.value}${(options.period.type === 'minutes' ? 'm' : (options.period.type === 'hour' ? 'h' : 's'))}`,
             "mode": "absolute",
             "timezone": "America/Sao_Paulo",
@@ -314,23 +326,23 @@ var eagleeyes = function() {
         }
       }, this.timelion)).then(body => {
         var data = {
-          "current": _.fromPairs(_.find(body.sheet[0].list, ['label', 'CURRENT']).data)
+          "current": _.fromPairs([_.head(_.takeRight(_.find(body.sheet[0].list, ['label', 'CURRENT']).data,2))])
         };
 
         var details = [];
         Object.keys(data.current).forEach(function(item) {
-          if ((data.current[item]*-1) > options.threshold.rate || data.current[item] > options.threshold.rate) {
-            details.push({
-              "metric": "checkoutVariation",
-              "value": Math.round(data.current[item])
-            });
-          }
+					if ((options.threshold.rate > 0 && data.current[item] > options.threshold.rate) || (options.threshold.rate < 0 && data.current[item] < options.threshold.rate)) {
+						details.push({
+							"metric": "checkoutVariation",
+							"value": Math.round(data.current[item])
+						});
+					}
         });
 
         resolve({
           alarm: options,
           details: details,
-          send: details.length >= 0
+          send: details.length > 0
         });
       }).catch(error => {
         reject(error.message);
