@@ -87,14 +87,24 @@ var eagleeyes = function() {
               }
             }
 
+            var now = moment();
 						// Remove alarms that in on outage window
 						_.filter(alarms, function(alarm) {
 							if (alarm.outage) {
-								var start = moment(alarm.outage.start, "HH:mm").format('HH');
-								var end = moment(alarm.outage.end, "HH:mm").format('HH');
-								var s = moment().hours(0).minutes(0).seconds(0).add(start, 'hours')
-								var e = moment().hours(0).minutes(0).seconds(0).add(start, 'hours').add(end, 'hours')
-								return !moment().isBetween(s, e)
+								var start = moment(`${now.format("YYYY-MM-DD")}T${alarm.outage.start}`);
+								var end = moment(`${now.format("YYYY-MM-DD")}T${alarm.outage.end}`);
+
+                // Check if need to adjust the day
+                if (start.isAfter(end)) {
+                  if (end.isBefore(now)) {
+                    end = end.add(1, 'day')
+                  } else {
+                    start = start.subtract(1, 'day')
+                  }
+
+                }
+
+								return !now.isBetween(start, end)
 							}
 							return true;
 						})
