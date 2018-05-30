@@ -1,7 +1,7 @@
 let es = require('elasticsearch')
 let _ = require('lodash')
 let extend = require('extend')
-let moment = require('moment')
+let moment = require('moment-timezone')
 let request = require('request-promise-native')
 // request.defaults({'proxy': '10.2.3.41:3128'})
 // const proxy = require('proxy-agent');
@@ -87,12 +87,12 @@ var eagleeyes = function() {
               }
             }
 
-            var now = moment();
+            var now = moment().tz("America/Sao_Paulo");
 						// Remove alarms that in on outage window
 						_.filter(alarms, function(alarm) {
 							if (alarm.outage) {
-								var start = moment(`${now.format("YYYY-MM-DD")}T${alarm.outage.start}`);
-								var end = moment(`${now.format("YYYY-MM-DD")}T${alarm.outage.end}`);
+                var start = moment.tz(`${now.format("YYYY-MM-DD")}T${alarm.outage.start}`, "America/Sao_Paulo");
+								var end = moment.tz(`${now.format("YYYY-MM-DD")}T${alarm.outage.end}`, "America/Sao_Paulo");
 
                 // Check if need to adjust the day
                 if (start.isAfter(end)) {
@@ -103,7 +103,7 @@ var eagleeyes = function() {
                   }
 
                 }
-
+                console.log(`Check outage window now: ${now.format("YYYY-MM-DDTHH:mm")} start: ${start.format("YYYY-MM-DDTHH:mm")} end: ${end.format("YYYY-MM-DDTHH:mm")}`)
 								return !now.isBetween(start, end)
 							}
 							return true;
