@@ -59,7 +59,7 @@ var eagleeyes = function() {
           }
         }).then(delayed => {
           self.sourceES.search({
-            index: ".eagle-eyes",
+            index: ".eagle-eyes-v2",
             type: "alarms",
             body: {
               "size": 1000
@@ -80,7 +80,7 @@ var eagleeyes = function() {
               // If has an item with _id = ALL dont check metrics for alarms
               if (_.filter(delayed.hits.hits, ['_id', 'ALL']).length == 0) {
                 alarms = _.pullAllWith(alarms, delayed.hits.hits, function(a, b) {
-                  return b["_id"] === a["_id"] || b["_id"] === a.group
+                  return b["_id"] === a["_id"] || (a.tags && a.tags.indexOf(b["_id"]) > -1)
                 });
               } else {
                 alarms = []
@@ -90,7 +90,7 @@ var eagleeyes = function() {
             var now = moment().tz("America/Sao_Paulo");
 						// Remove alarms that in on outage window
 						alarms = _.filter(alarms, function(alarm) {
-							if (alarm.outage) {
+							if (alarm.outage && alarm.outage.start && alarm.outage.end) {
                 var start = moment.tz(`${now.format("YYYY-MM-DD")}T${alarm.outage.start}`, "America/Sao_Paulo");
 								var end = moment.tz(`${now.format("YYYY-MM-DD")}T${alarm.outage.end}`, "America/Sao_Paulo");
 
@@ -141,7 +141,7 @@ var eagleeyes = function() {
             "timestamp": moment().subtract(1, 'minutes').format("YYYY-MM-DDTHH:mm:ss.SSSZ"),
             "source": alarm.alarm.name,
             "severity": "critical",
-            "group": alarm.alarm.group,
+            "group": _.toString(alarm.alarm.tags),
             "class": alarm.alarm.type
           },
           "event_action": "trigger"
