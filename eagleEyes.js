@@ -62,6 +62,19 @@ var eagleeyes = function() {
             index: ".eagle-eyes-v2",
             type: "alarms",
             body: {
+              "query": {
+                "bool": {
+                  "must": [
+                    {
+                      "query_string": {
+                        "query": "enabled:true",
+                        "analyze_wildcard": true
+                      }
+                    }
+                  ],
+                  "must_not": []
+                }
+              },
               "size": 1000
             }
           }).then(body => {
