@@ -348,19 +348,23 @@ var eagleeyes = function() {
           }
         }
       }, this.timelion)).then(body => {
-        var data = {
-          "current": _.fromPairs([_.head(_.takeRight(_.find(body.sheet[0].list, ['label', 'CURRENT']).data,2))])
-        };
-
+        var series = _.find(body.sheet[0].list, ['label', 'CURRENT']).data;
         var details = [];
-        Object.keys(data.current).forEach(function(item) {
-					if ((options.threshold.rate > 0 && data.current[item] > options.threshold.rate) || (options.threshold.rate < 0 && data.current[item] < options.threshold.rate)) {
-						details.push({
-							"metric": "checkoutVariation",
-							"value": Math.round(data.current[item])
-						});
-					}
-        });
+        // Check only if has sufficient data
+        if (series.length > 1) {
+          var data = {
+            "current": _.fromPairs([_.head(_.takeRight(series,2))])
+          };
+
+          Object.keys(data.current).forEach(function(item) {
+  					if ((options.threshold.rate > 0 && data.current[item] > options.threshold.rate) || (options.threshold.rate < 0 && data.current[item] < options.threshold.rate)) {
+  						details.push({
+  							"metric": "checkoutVariation",
+  							"value": Math.round(data.current[item])
+  						});
+  					}
+          });
+        }
 
         resolve({
           alarm: options,
