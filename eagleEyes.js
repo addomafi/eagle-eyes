@@ -22,9 +22,9 @@ var eagleeyes = function() {
   });
 
   self.timelion = {
-    url: `https://${process.env.TARGET_ELK_HOST}/_plugin/kibana/api/timelion/run`,
+    url: `http://${process.env.TARGET_KIBANA_HOST}/api/timelion/run`,
     headers: {
-      "kbn-version": "5.3.2"
+      "kbn-version": `${process.env.TARGET_KIBANA_VERSION}`
     }
   };
 
@@ -264,7 +264,7 @@ var eagleeyes = function() {
       request.post(extend({
         json: {
           "sheet": [
-            `.es(index=${options.index}, q='${options.queryErrors}', metric=${options.metric}, timefield=${options.timestamp}).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp})).multiply(100).label('CURRENT')`
+            `.es(index=${options.index}, q='${options.queryErrors}', metric=${options.metric}, timefield=${options.timestamp}, fit=none).divide(.es(index=${options.index}, q='*', metric=${options.metric}, timefield=${options.timestamp}, fit=none)).multiply(100).label('CURRENT')`
           ],
           "extended": {
             "es": {
@@ -323,7 +323,7 @@ var eagleeyes = function() {
       request.post(extend({
         "json": {
           "sheet": [
-            `.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}).divide(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-1w).sum(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-2w)).sum(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-3w)).sum(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-4w)).divide(4)).subtract(1).multiply(100).label('CURRENT')`
+            `.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, fit=none).divide(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-1w, fit=none).sum(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-2w, fit=none)).sum(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-3w, fit=none)).sum(.es(index=${options.index}, q='${options.query}', metric=${options.metric}, timefield=${options.timestamp}, offset=-4w, fit=none)).divide(4)).subtract(1).multiply(100).label('CURRENT')`
           ],
           "extended": {
             "es": {
@@ -353,7 +353,7 @@ var eagleeyes = function() {
         // Check only if has sufficient data
         if (series.length > 1) {
           var data = {
-            "current": _.fromPairs([_.head(_.takeRight(series,2))])
+            "current": _.fromPairs([_.head(_.takeRight(_.filter(series, s => s[1] != null),2))])
           };
 
           Object.keys(data.current).forEach(function(item) {
@@ -364,6 +364,11 @@ var eagleeyes = function() {
   						});
   					}
           });
+        }
+
+        // Log details
+        if (details.length > 0) {
+          console.log(JSON.stringify(series));
         }
 
         resolve({
