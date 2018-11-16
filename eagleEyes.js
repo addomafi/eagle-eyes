@@ -296,19 +296,21 @@ var eagleeyes = function() {
         };
 
         var details = [];
+        var skippedFirst = false;
         Object.keys(data.current).forEach(function(item) {
-          if (data.current[item] > options.threshold.rate) {
+          if (skippedFirst && details.length < options.period.value) {
             details.push({
               "metric": "errorRate",
-              "value": Math.round(data.current[item])
+              "value": data.current[item]
             });
           }
+          skippedFirst = true;
         });
 
         resolve({
           alarm: options,
           details: details,
-          send: details.length >= options.period.value
+          send: (_.sumBy(details, 'value') / options.period.value) > options.threshold.rate
         });
       }).catch(error => {
         reject(error.message);
@@ -387,6 +389,12 @@ eagleeyes.prototype.process = function(options) {
   var self = this
   return new Promise((resolve, reject) => {
     this._init().then(config => {
+      if (options && options.testList) {
+        config.alarms = _.filter(config.alarms, function(item) {
+          return options.testList.indexOf(item["_id"]) > -1
+        })
+      }
+
       PromiseBB.map(config.alarms, function(item) {
         // set defaults
         item = extend({
@@ -395,22 +403,12 @@ eagleeyes.prototype.process = function(options) {
           "metric": "count"
         }, item);
 
-        if (options && options.testList && options.testList.indexOf(item["_id"]) > -1) {
-          return new Promise(resolve => {
-            resolve({
-              alarm: item,
-              details: {},
-              send: true
-            });
-          });
-        } else {
-          if ("RESPONSE_TIME" === item.type) {
-            return self._checkResponseTime(item);
-          } else if ("ERROR_OCCURRENCES" === item.type) {
-            return self._checkErrorRate(item);
-          } else if ("CHECKOUT_VARIATION" === item.type) {
-            return self._checkoutVariation(item);
-          }
+        if ("RESPONSE_TIME" === item.type) {
+          return self._checkResponseTime(item);
+        } else if ("ERROR_OCCURRENCES" === item.type) {
+          return self._checkErrorRate(item);
+        } else if ("CHECKOUT_VARIATION" === item.type) {
+          return self._checkoutVariation(item);
         }
       }, {
         concurrency: self.options.concurrency
