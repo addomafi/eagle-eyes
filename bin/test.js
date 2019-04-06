@@ -8,7 +8,9 @@ var path = require('path')
 var Eagleeyes = require(path.join(__dirname, '..', 'eagleEyes.js'))
 var eagle = new Eagleeyes()
 
-eagle.process({testList:["AWW19oA4ULUTwSUcDzzX"]}).then(results => {
+eagle.process({
+  testList: ["6A4dfmkBV4f-qiKISoBr"]
+}).then(results => {
   console.log(JSON.stringify(results));
 }).catch(err => {
   console.log(err)

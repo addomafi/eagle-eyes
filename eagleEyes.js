@@ -6,6 +6,8 @@ let request = require('request-promise-native')
 // request.defaults({'proxy': '10.2.3.41:3128'})
 const proxy = require('proxy-agent');
 var PromiseBB = require("bluebird");
+let EeAwsGlue = require("eagle-eyes-aws-glue")
+var eeAwsGlue = new EeAwsGlue()
 
 var eagleeyes = function() {
   var self = this
@@ -116,7 +118,6 @@ var eagleeyes = function() {
                   }
 
                 }
-                console.log(`Check outage window now: ${now.format("YYYY-MM-DDTHH:mm")} start: ${start.format("YYYY-MM-DDTHH:mm")} end: ${end.format("YYYY-MM-DDTHH:mm")}`)
 								return !now.isBetween(start, end)
 							}
 							return true;
@@ -289,8 +290,13 @@ var eagleeyes = function() {
           }
         }
       }, this.timelion)).then(body => {
+        var series = _.find(body.sheet[0].list, ['label', 'CURRENT'])
+        var currentData = []
+        if (series) {
+          currentData = _.fromPairs(series.data)
+        }
         var data = {
-          "current": _.fromPairs(_.find(body.sheet[0].list, ['label', 'CURRENT']).data)
+          "current": currentData
           // "offset" : _.fromPairs(_.find(body.sheet[0].list, ['label', 'OFFSET']).data),
           // "requestRate" : _.fromPairs(_.find(body.sheet[0].list, ['label', 'REQUEST_RATE']).data)
         };
@@ -383,6 +389,34 @@ var eagleeyes = function() {
       });
     });
   }
+
+  self._glueJobs = function(options) {
+    return new Promise((resolve, reject) => {
+      eeAwsGlue.checkJobRun(options).then(results => {
+        var alarms = []
+        results.forEach(glueJob => {
+          alarms.push({
+            alarm: extend({
+              jobId: glueJob.name,
+              jobStatus: glueJob.status
+            }, options),
+            details: glueJob,
+            send: true
+          })
+        })
+        // Delay the next check if necessary
+        if (alarms.length == 0) {
+          alarms.push({
+            alarm: options,
+            delay: true
+          })
+        }
+        resolve(alarms);
+      }).catch(err => {
+        reject(err);
+      });
+    })
+  }
 }
 
 eagleeyes.prototype.process = function(options) {
@@ -409,13 +443,16 @@ eagleeyes.prototype.process = function(options) {
           return self._checkErrorRate(item);
         } else if ("CHECKOUT_VARIATION" === item.type) {
           return self._checkoutVariation(item);
+        } else if ("GLUE_JOBS" === item.type) {
+          return self._glueJobs(item);
         }
       }, {
         concurrency: self.options.concurrency
       }).then(results => {
-        var alarms = _.filter(results, 'send');
+        var alarms = _.filter(_.flatten(results), function(o) {return o.send || o.delay});
         if (alarms.length > 0) {
-          alarms.forEach(alarm => {
+          // Send alarms
+          _.filter(alarms, 'send').forEach(alarm => {
             this._sendAlarm(alarm).then(body => {
               console.log('Alarm was sent... ' + JSON.stringify(body));
             }).catch(err => {
