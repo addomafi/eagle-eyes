@@ -360,18 +360,23 @@ var eagleeyes = function() {
         var details = [];
         // Check only if has sufficient data
         if (series.length > 1) {
-          var data = {
-            "current": _.fromPairs([_.head(_.takeRight(_.filter(series, s => s[1] != null),2))])
-          };
+          var data = {};
+          try {
+            data = {
+              "current": _.fromPairs([_.head(_.takeRight(_.filter(series, s => s[1] != null),2))])
+            }
 
-          Object.keys(data.current).forEach(function(item) {
-  					if ((options.threshold.rate > 0 && data.current[item] > options.threshold.rate) || (options.threshold.rate < 0 && data.current[item] < options.threshold.rate)) {
-  						details.push({
-  							"metric": "checkoutVariation",
-  							"value": Math.round(data.current[item])
-  						});
-  					}
-          });
+            Object.keys(data.current).forEach(function(item) {
+    					if ((options.threshold.rate > 0 && data.current[item] > options.threshold.rate) || (options.threshold.rate < 0 && data.current[item] < options.threshold.rate)) {
+    						details.push({
+    							"metric": "checkoutVariation",
+    							"value": Math.round(data.current[item])
+    						});
+    					}
+            });
+          } catch(err) {
+            console.log(`Discarding alarm for Checkout Variation ${options._id}-${options.name}`)
+          }
         }
 
         // Log details
