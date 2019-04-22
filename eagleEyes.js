@@ -30,13 +30,6 @@ var eagleeyes = function() {
     }
   };
 
-  self.pagerduty = {
-    url: process.env.PG_URL,
-    json: {
-      "routing_key": process.env.PG_KEY
-    }
-  };
-
   self.options = {
     concurrency: parseInt(process.env.CONCURRENCY)
   };
@@ -61,7 +54,7 @@ var eagleeyes = function() {
           }
         }).then(delayed => {
           self.sourceES.search({
-            index: ".eagle-eyes-v2",
+            index: ".eagle-eyes",
             type: "alarms",
             body: {
               "query": {
@@ -86,7 +79,8 @@ var eagleeyes = function() {
                 _id: item["_id"],
                 name: item["_source"].name,
                 description: item["_source"].description,
-                version: item["_source"].version
+                version: item["_source"].version,
+                tags: item["_source"].tags
               }, JSON.parse(item["_source"].configJSON)));
             });
 
@@ -123,15 +117,50 @@ var eagleeyes = function() {
 							return true;
 						})
 
-            resolve({
-              loadTime: process.hrtime(),
-              alarms: alarms
-            });
+            self.sourceES.search({
+              index: ".eagle-eyes-integrations",
+              type: "_doc",
+              body: {
+                "query": {
+                  "bool": {
+                    "must": [
+                      {
+                        "query_string": {
+                          "query": "enabled:true",
+                          "analyze_wildcard": true
+                        }
+                      }
+                    ],
+                    "must_not": []
+                  }
+                },
+                "size": 1000
+              }
+            }).then(bodyInt => {
+              var integrations = [];
+              bodyInt.hits.hits.forEach(function(item) {
+                integrations.push(extend({
+                  _id: item["_id"],
+                  name: item["_source"].name,
+                  description: item["_source"].description,
+                  version: item["_source"].version,
+                  tags: item["_source"].tags
+                }, JSON.parse(item["_source"].configJSON)));
+              });
+
+              resolve({
+                loadTime: process.hrtime(),
+                alarms: alarms,
+                integrations: integrations
+              });
+            }, err => {
+              reject(err.message);
+            })
           }, err => {
-            reject(error.message);
+            reject(err.message);
           })
         }, err => {
-          reject(error.message);
+          reject(err.message);
         });
       } else {
         resolve(self.config);
@@ -139,7 +168,7 @@ var eagleeyes = function() {
     });
   }
 
-  self._sendAlarm = function(alarm) {
+  self._sendAlarm = function(alarm, integrations) {
     var template = function(tpl, args) {
       var keys = Object.keys(args),
         fn = new Function(...keys,
@@ -147,8 +176,8 @@ var eagleeyes = function() {
       return fn(...keys.map(x => args[x]));
     };
 
-    return new Promise((resolve, reject) => {
-      request.post(extend(true, {
+    var sendPagerDuty = function(alarm, integration) {
+      return request.post({
         "json": {
           "payload": {
             "summary": `${alarm.alarm.name} - ${template(alarm.alarm.description, alarm.alarm)}`,
@@ -158,9 +187,38 @@ var eagleeyes = function() {
             "group": _.toString(alarm.alarm.tags),
             "class": alarm.alarm.type
           },
-          "event_action": "trigger"
-        }
-      }, this.pagerduty)).then(body => {
+          "event_action": "trigger",
+          "routing_key": integration.apiKey
+        },
+        "url": integration.endpoint
+      })
+    }
+
+    var sendSlack = function(alarm, integration) {
+      return request.post({
+        "form": {
+          "payload": JSON.stringify({
+            "channel": integration.channel,
+            "username": "EagleEyes",
+            "text": `${alarm.alarm.name} - ${template(alarm.alarm.description, alarm.alarm)}`
+          })
+        },
+        "url": integration.endpoint
+      })
+    }
+
+    return new Promise((resolve, reject) => {
+      var triggerAlarm = _.filter(integrations, function(integration) {
+        return _.intersection(integration.tags, alarm.alarm.tags).length > 0
+      })
+
+      PromiseBB.map(triggerAlarm, function(item) {
+        // set defaults
+        if (item.type === "PAGER_DUTY") return triggerAlarm.push(sendPagerDuty(alarm, item))
+        else if (item.type === "SLACK") return triggerAlarm.push(sendSlack(alarm, item))
+      }, {
+        concurrency: self.options.concurrency
+      }).then(body => {
         resolve(body);
       }).catch(err => {
         reject(err);
@@ -458,7 +516,7 @@ eagleeyes.prototype.process = function(options) {
         if (alarms.length > 0) {
           // Send alarms
           _.filter(alarms, 'send').forEach(alarm => {
-            this._sendAlarm(alarm).then(body => {
+            this._sendAlarm(alarm, config.integrations).then(body => {
               console.log('Alarm was sent... ' + JSON.stringify(body));
             }).catch(err => {
               console.log('Was identified an error during the triggering of an alarm... ' + JSON.stringify(err));
